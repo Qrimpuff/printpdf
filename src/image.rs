@@ -65,13 +65,21 @@ impl Image {
     ///
     /// You can use the "transform.dpi" parameter to specify a scaling -
     /// the default is 300dpi
-    pub fn add_to_layer(mut self, layer: PdfLayerReference, transform: ImageTransform) {
+    pub fn add_to_layer(self, layer: PdfLayerReference, transform: ImageTransform) {
+        self.add_to_layer_with_many_transforms(layer, &[transform])
+    }
+
+    pub fn add_to_layer_with_many_transforms(
+        mut self,
+        layer: PdfLayerReference,
+        transforms: &[ImageTransform],
+    ) {
         use crate::CurTransMat;
         use crate::Pt;
 
         // PDF maps an image to a 1x1 square, we have to adjust the transform matrix
         // to fix the distortion
-        let dpi = transform.dpi.unwrap_or(300.0);
+        let dpi = transforms[0].dpi.unwrap_or(300.0);
 
         //Image at the given dpi should 1px = 1pt
         let image_w = self.image.width.into_pt(dpi);
@@ -89,34 +97,36 @@ impl Image {
         };
         let image = layer.add_image(self.image);
 
-        let scale_x = transform.scale_x.unwrap_or(1.0);
-        let scale_y = transform.scale_y.unwrap_or(1.0);
-        let image_w = image_w.0 * scale_x;
-        let image_h = image_h.0 * scale_y;
+        for transform in transforms {
+            let scale_x = transform.scale_x.unwrap_or(1.0);
+            let scale_y = transform.scale_y.unwrap_or(1.0);
+            let image_w = image_w.0 * scale_x;
+            let image_h = image_h.0 * scale_y;
 
-        let mut transforms = Vec::new();
+            let mut transforms = Vec::new();
 
-        transforms.push(CurTransMat::Scale(image_w, image_h));
+            transforms.push(CurTransMat::Scale(image_w, image_h));
 
-        if let Some(rotate) = transform.rotate.as_ref() {
-            transforms.push(CurTransMat::Translate(
-                Pt(-rotate.rotation_center_x.into_pt(dpi).0),
-                Pt(-rotate.rotation_center_y.into_pt(dpi).0),
-            ));
-            transforms.push(CurTransMat::Rotate(rotate.angle_ccw_degrees));
-            transforms.push(CurTransMat::Translate(
-                rotate.rotation_center_x.into_pt(dpi),
-                rotate.rotation_center_y.into_pt(dpi),
-            ));
+            if let Some(rotate) = transform.rotate.as_ref() {
+                transforms.push(CurTransMat::Translate(
+                    Pt(-rotate.rotation_center_x.into_pt(dpi).0),
+                    Pt(-rotate.rotation_center_y.into_pt(dpi).0),
+                ));
+                transforms.push(CurTransMat::Rotate(rotate.angle_ccw_degrees));
+                transforms.push(CurTransMat::Translate(
+                    rotate.rotation_center_x.into_pt(dpi),
+                    rotate.rotation_center_y.into_pt(dpi),
+                ));
+            }
+
+            if transform.translate_x.is_some() || transform.translate_y.is_some() {
+                transforms.push(CurTransMat::Translate(
+                    transform.translate_x.unwrap_or(Mm(0.0)).into_pt(),
+                    transform.translate_y.unwrap_or(Mm(0.0)).into_pt(),
+                ));
+            }
+
+            layer.use_xobject(image.clone(), &transforms);
         }
-
-        if transform.translate_x.is_some() || transform.translate_y.is_some() {
-            transforms.push(CurTransMat::Translate(
-                transform.translate_x.unwrap_or(Mm(0.0)).into_pt(),
-                transform.translate_y.unwrap_or(Mm(0.0)).into_pt(),
-            ));
-        }
-
-        layer.use_xobject(image, &transforms);
     }
 }
